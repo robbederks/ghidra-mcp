@@ -2587,6 +2587,7 @@
         "function_address",
         "variable_name",
         "storage",
+        "data_type",
         "program"
       ],
       "description": "Set variable storage"

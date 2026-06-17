@@ -546,9 +546,9 @@ public class EndpointRegistry {
             (q, b) -> functionService.clearInstructionFlowOverride(bodyStr(b, "address"), str(q, "program")));
 
         post("/set_variable_storage", "Set variable storage location",
-            params(bStr("function_address"), bStr("variable_name"), bStr("storage"), pProg()),
+            params(bStr("function_address"), bStr("variable_name"), bStr("storage"), bStr("data_type"), pProg()),
             (q, b) -> functionService.setVariableStorage(bodyStr(b, "function_address"),
-                bodyStr(b, "variable_name"), bodyStr(b, "storage"), str(q, "program")));
+                bodyStr(b, "variable_name"), bodyStr(b, "storage"), bodyStr(b, "data_type"), str(q, "program")));
 
         get("/get_function_variables", "List all variables in a function",
             params(qStrOpt("function_name", "Function name"), qStrOpt("address", "Function address; takes precedence over function_name"), pProg()),
