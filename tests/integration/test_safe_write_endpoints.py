@@ -20,6 +20,17 @@ import json
 import re
 
 
+def detable(value):
+    """Expand a compact columnar table {"columns":[...],"rows":[[...]]} into a
+    list of dicts; pass-through for legacy list payloads."""
+    if isinstance(value, dict) and "columns" in value and "rows" in value:
+        cols = value.get("columns") or []
+        return [dict(zip(cols, row)) for row in (value.get("rows") or [])]
+    if isinstance(value, list):
+        return value
+    return []
+
+
 # Mark all tests as safe-write integration tests
 pytestmark = [
     pytest.mark.integration,
@@ -602,3 +613,79 @@ class TestWriteEndpointAvailability:
         # Actually 404 is OK if the endpoint just doesn't exist in this version
         # We're checking the endpoint is reachable
         assert response.status_code in [200, 400, 404, 405, 500]
+
+
+def _any_function_address(http_client):
+    """Resolve a real function address on whatever binary is loaded, using the
+    columnar list_functions_enhanced output (arch-agnostic — the shared
+    first_function fixture mis-parses some binaries' list_functions text)."""
+    r = http_client.get("/list_functions_enhanced", params={"limit": 1})
+    if r.status_code != 200:
+        return None
+    funcs = detable(r.json().get("functions"))
+    if not funcs:
+        return None
+    f = funcs[0]
+    return f.get("address_full") or f.get("address")
+
+
+class TestSetVariableStorage:
+    """`/set_variable_storage` now assigns real custom storage (register, register
+    pair, stack slot, or memory address) instead of just printing instructions.
+
+    These cover the validation/error path only — they fail *before* any mutation
+    (a bad spec is rejected at parse time, before custom storage is enabled), so
+    they stay safe-write. The positive round-trip is covered by live
+    verification after deploy.
+
+    Build detection: targeting "return" with a nonsense storage string makes the
+    REAL implementation fail at parse time ("could not parse … register/stack"),
+    while the old informational stub instead reports the variable "return" was
+    not found. We use that to skip cleanly on pre-implementation JARs.
+    """
+
+    BOGUS_SPEC = "definitely_not_a_location"
+
+    def _probe(self, http_client):
+        """Return (addr, response) for a return+bogus-spec probe, or skip."""
+        addr = _any_function_address(http_client)
+        if not addr:
+            pytest.skip("No function available to test storage assignment")
+        resp = http_client.post(
+            "/set_variable_storage",
+            json_data={
+                "function_address": addr,
+                "variable_name": "return",
+                "storage": self.BOGUS_SPEC,
+            },
+        )
+        if resp.status_code == 404:
+            pytest.skip("/set_variable_storage not deployed in current JAR")
+        low = resp.text.lower()
+        if "could not parse" not in low:
+            # Old stub (or a build that doesn't handle "return") — it reports the
+            # variable as not found instead of parsing the storage spec.
+            pytest.skip("real set_variable_storage not deployed (stub response)")
+        return addr, resp
+
+    def test_invalid_storage_spec_rejected(self, http_client):
+        """A storage string that is not a register/stack/memory location is
+        rejected at parse time, naming the accepted forms."""
+        _addr, resp = self._probe(http_client)
+        low = resp.text.lower()
+        assert "could not parse" in low
+        assert "register" in low or "stack" in low  # guidance toward a valid form
+
+    def test_unknown_variable_rejected(self, http_client):
+        """Targeting a variable that does not exist is rejected before any
+        custom-storage change is applied."""
+        addr, _resp = self._probe(http_client)  # also confirms the real build
+        resp = http_client.post(
+            "/set_variable_storage",
+            json_data={
+                "function_address": addr,
+                "variable_name": "__no_such_variable__zzz",
+                "storage": "r0",
+            },
+        )
+        assert "not found" in resp.text.lower()
