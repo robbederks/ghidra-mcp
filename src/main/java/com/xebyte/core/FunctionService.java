@@ -2031,7 +2031,7 @@ public class FunctionService {
      * @param storageSpec Storage specification (e.g., "Stack[-0x10]:4", "EBP:4", "EAX:4")
      * @return Success or error message
      */
-    @McpTool(path = "/set_variable_storage", method = "POST", description = "Set variable storage location. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "function")
+    @McpTool(path = "/set_variable_storage", method = "POST", description = "Assign a custom storage location (register, register pair, stack slot, or memory address) to a function parameter, local variable, or the return value. This enables custom variable storage on the function (so the decompiler stops auto-assigning from the calling convention) and is how you express __usercall-style layouts where a value lives in a specific register. To change a parameter/return TYPE without moving it, use set_function_prototype/set_parameter_type instead. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "function")
     public Response setVariableStorage(
             @Param(value = "function_address", paramType = "address", source = ParamSource.BODY,
                    description = "Address in the program. Accepts 0x<hex> (default space) or <space>:<hex> "
@@ -2039,8 +2039,14 @@ public class FunctionService {
                                + "embedded/microcontroller targets — are not address-space-agnostic; "
                                + "use get_address_spaces to discover spaces before assuming a plain hex "
                                + "address is unambiguous.") String functionAddrStr,
-            @Param(value = "variable_name", source = ParamSource.BODY) String variableName,
-            @Param(value = "storage", source = ParamSource.BODY) String storageSpec,
+            @Param(value = "variable_name", source = ParamSource.BODY,
+                   description = "Name of the parameter or local variable to relocate, or \"return\" "
+                               + "(or \"<RETURN>\") to set the return-value storage.") String variableName,
+            @Param(value = "storage", source = ParamSource.BODY,
+                   description = "Storage location. One of: a register name (EAX, R7, DPTR); a register "
+                               + "pair high:low (EDX:EAX); a stack slot stack:<offset> (stack:0x8, "
+                               + "stack:-0x4); or a memory address ram:0x1234 / <space>:<hex>. Storage is "
+                               + "fit to the variable's current data type.") String storageSpec,
             @Param(value = "program", defaultValue = "") String programName) {
         ServiceUtils.ProgramOrError pe = ServiceUtils.getProgramOrError(programProvider, programName);
         if (pe.hasError()) return pe.error();
@@ -2060,60 +2066,97 @@ public class FunctionService {
         Address addr = ServiceUtils.parseAddress(program, functionAddrStr);
         if (addr == null) return Response.err(ServiceUtils.getLastParseError());
 
+        final boolean wantReturn = variableName.equalsIgnoreCase("return")
+                || variableName.equalsIgnoreCase("<RETURN>");
         final StringBuilder resultMsg = new StringBuilder();
         final AtomicBoolean success = new AtomicBoolean(false);
 
         try {
             threadingStrategy.executeWrite(program, "Set variable storage", () -> {
-
                 Function func = program.getFunctionManager().getFunctionAt(addr);
                 if (func == null) {
                     resultMsg.append("Error: No function found at address ").append(functionAddrStr);
                     return null;
                 }
 
-                // Find the variable
+                // Resolve the target (return value or a named param/local) and the
+                // data type the storage must hold (used to size stack/memory slots).
                 Variable targetVar = null;
-                for (Variable var : func.getAllVariables()) {
-                    if (var.getName().equals(variableName)) {
-                        targetVar = var;
-                        break;
+                DataType dt;
+                if (wantReturn) {
+                    dt = func.getReturnType();
+                } else {
+                    for (Variable var : func.getAllVariables()) {
+                        if (var.getName().equals(variableName)) {
+                            targetVar = var;
+                            break;
+                        }
                     }
+                    if (targetVar == null) {
+                        resultMsg.append("Error: Variable '").append(variableName)
+                                 .append("' not found in function ").append(func.getName())
+                                 .append(". Use \"return\" to set the return-value storage.");
+                        return null;
+                    }
+                    dt = targetVar.getDataType();
                 }
 
-                if (targetVar == null) {
-                    resultMsg.append("Error: Variable '").append(variableName).append("' not found in function ").append(func.getName());
+                int size = (dt != null && dt.getLength() > 0) ? dt.getLength() : 1;
+                VariableStorage newStorage;
+                try {
+                    newStorage = parseVariableStorage(program, storageSpec, size);
+                } catch (ghidra.util.exception.InvalidInputException | NumberFormatException ex) {
+                    resultMsg.append("Error: Could not parse storage '").append(storageSpec)
+                             .append("': ").append(ex.getMessage())
+                             .append(". Accepted: register (EAX, R7, DPTR), register pair high:low ")
+                             .append("(EDX:EAX), stack (stack:0x8, stack:-0x4), or memory (ram:0x1234).");
                     return null;
                 }
 
-                String oldStorage = targetVar.getVariableStorage().toString();
+                // Parameters only honor explicit storage when the function is in
+                // custom-storage mode; otherwise Ghidra recomputes them from the
+                // calling convention and discards the request.
+                boolean enabledNow = false;
+                if (!func.hasCustomVariableStorage()) {
+                    func.setCustomVariableStorage(true);
+                    enabledNow = true;
+                }
 
-                // Ghidra's variable storage API has limited programmatic access
-                // The proper way to change variable storage is through the decompiler UI
-                resultMsg.append("Note: Programmatic variable storage control is limited in Ghidra.\n\n");
-                resultMsg.append("Current variable information:\n");
-                resultMsg.append("  Variable: ").append(variableName).append("\n");
-                resultMsg.append("  Function: ").append(func.getName()).append(" @ ").append(functionAddrStr).append("\n");
-                resultMsg.append("  Current storage: ").append(oldStorage).append("\n");
-                resultMsg.append("  Requested storage: ").append(storageSpec).append("\n\n");
-                resultMsg.append("To change variable storage:\n");
-                resultMsg.append("1. Open the function in Ghidra's Decompiler window\n");
-                resultMsg.append("2. Right-click on the variable '").append(variableName).append("'\n");
-                resultMsg.append("3. Select 'Edit Data Type' or 'Retype Variable'\n");
-                resultMsg.append("4. Manually adjust the storage location\n\n");
-                resultMsg.append("Alternative approach:\n");
-                resultMsg.append("- Use run_script() to execute a custom Ghidra script\n");
-                resultMsg.append("- The script can use high-level Pcode/HighVariable API\n");
-                resultMsg.append("- See FixEBPRegisterReuse.java for an example\n");
-
-                success.set(true);
-                Msg.info(this, "Variable storage query for: " + variableName + " in " + func.getName() +
-                         " (current: " + oldStorage + ", requested: " + storageSpec + ")");
+                try {
+                    if (wantReturn) {
+                        String oldStorage = func.getReturn().getVariableStorage().toString();
+                        func.setReturn(dt, newStorage, SourceType.USER_DEFINED);
+                        resultMsg.append("Set return storage: ").append(oldStorage)
+                                 .append(" -> ").append(newStorage.toString());
+                    } else {
+                        String oldStorage = targetVar.getVariableStorage().toString();
+                        targetVar.setDataType(dt, newStorage, true, SourceType.USER_DEFINED);
+                        resultMsg.append("Set storage for '").append(variableName).append("': ")
+                                 .append(oldStorage).append(" -> ").append(newStorage.toString());
+                    }
+                    if (enabledNow) {
+                        resultMsg.append("\n(Enabled custom variable storage on ").append(func.getName())
+                                 .append("; other parameters now use their current storage explicitly.)");
+                    }
+                    success.set(true);
+                    Msg.info(this, "Set variable storage for " + variableName + " in " + func.getName()
+                             + " -> " + newStorage);
+                } catch (ghidra.util.exception.InvalidInputException ex) {
+                    // Roll back the custom-storage toggle if we turned it on just now
+                    // and the actual assignment failed, so we don't leave the function
+                    // in a half-changed state.
+                    if (enabledNow) {
+                        try { func.setCustomVariableStorage(false); } catch (Exception ignore) {}
+                    }
+                    resultMsg.append("Error: Ghidra rejected storage ").append(newStorage.toString())
+                             .append(" for type ").append(dt != null ? dt.getName() : "?")
+                             .append(": ").append(ex.getMessage());
+                }
                 return null;
             });
         } catch (Exception e) {
-            resultMsg.append("Error: Failed to execute on Swing thread: ").append(e.getMessage());
-            Msg.error(this, "Failed to execute set variable storage on Swing thread", e);
+            resultMsg.append("Error: Failed to set variable storage: ").append(e.getMessage());
+            Msg.error(this, "Failed to set variable storage", e);
         }
 
         String text = resultMsg.length() > 0 ? resultMsg.toString() : "Error: Unknown failure";
@@ -2121,6 +2164,75 @@ public class FunctionService {
             return Response.text(text);
         }
         return Response.err(text.startsWith("Error: ") ? text.substring(7) : text);
+    }
+
+    /**
+     * Parse a human-friendly storage spec into a Ghidra {@link VariableStorage}.
+     * Supported forms (keywords/registers are case-insensitive):
+     * <ul>
+     *   <li>{@code EAX} / {@code R7} / {@code DPTR} — a single register</li>
+     *   <li>{@code EDX:EAX} — a register pair, most-significant first</li>
+     *   <li>{@code stack:0x8} / {@code stack:-0x4} — stack storage at a frame offset</li>
+     *   <li>{@code ram:0x1234} or any resolvable {@code <space>:<hex>} — memory/global storage</li>
+     * </ul>
+     * {@code size} is the variable's data-type length, used to size stack/memory storage.
+     */
+    private VariableStorage parseVariableStorage(Program program, String spec, int size)
+            throws ghidra.util.exception.InvalidInputException {
+        String s = spec.trim();
+        String lower = s.toLowerCase();
+
+        // Stack storage: stack:<signed offset> or stack[<signed offset>]
+        if (lower.startsWith("stack:") || lower.startsWith("stack[")) {
+            char sep = lower.startsWith("stack[") ? '[' : ':';
+            String off = s.substring(s.indexOf(sep) + 1).trim();
+            if (off.endsWith("]")) off = off.substring(0, off.length() - 1).trim();
+            return new VariableStorage(program, parseSignedInt(off), size);
+        }
+
+        // Register or register pair (high:low). Every ':'-separated token must
+        // resolve to a register for this to count as register storage.
+        String[] tokens = s.split(":");
+        ghidra.program.model.lang.Register[] regs =
+            new ghidra.program.model.lang.Register[tokens.length];
+        boolean allRegs = tokens.length > 0;
+        for (int i = 0; i < tokens.length; i++) {
+            ghidra.program.model.lang.Register reg = resolveRegister(program, tokens[i].trim());
+            if (reg == null) { allRegs = false; break; }
+            regs[i] = reg;
+        }
+        if (allRegs) {
+            return new VariableStorage(program, regs);
+        }
+
+        // Otherwise treat it as a memory/global address.
+        Address memAddr = ServiceUtils.parseAddress(program, s);
+        if (memAddr != null) {
+            return new VariableStorage(program, memAddr, size);
+        }
+        throw new ghidra.util.exception.InvalidInputException(
+            "not a register, register pair, stack:offset, or memory address");
+    }
+
+    /** Look up a register by name, tolerant of case (registers are often upper-case). */
+    private static ghidra.program.model.lang.Register resolveRegister(Program program, String name) {
+        if (name == null || name.isEmpty()) return null;
+        ghidra.program.model.lang.Register reg = program.getLanguage().getRegister(name);
+        if (reg == null) reg = program.getLanguage().getRegister(name.toUpperCase());
+        if (reg == null) reg = program.getLanguage().getRegister(name.toLowerCase());
+        return reg;
+    }
+
+    /** Parse a signed integer that may be hex (0x..) or decimal. */
+    private static int parseSignedInt(String s) {
+        s = s.trim();
+        boolean neg = false;
+        if (s.startsWith("-")) { neg = true; s = s.substring(1).trim(); }
+        else if (s.startsWith("+")) { s = s.substring(1).trim(); }
+        int v = (s.startsWith("0x") || s.startsWith("0X"))
+            ? Integer.parseInt(s.substring(2), 16)
+            : Integer.parseInt(s);
+        return neg ? -v : v;
     }
 
     public Response setVariableStorage(String functionAddrStr, String variableName, String storageSpec) {
