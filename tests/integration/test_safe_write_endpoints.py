@@ -689,3 +689,44 @@ class TestSetVariableStorage:
             },
         )
         assert "not found" in resp.text.lower()
+
+    def _supports_enhancements(self, http_client):
+        """Return a function address if this build supports the storage='auto'
+        reset + data_type param; else skip. Detects the enhancement by whether
+        'auto' is recognized as a keyword (older builds try to parse it as a
+        register/address and fail)."""
+        addr = _any_function_address(http_client)
+        if not addr:
+            pytest.skip("No function available")
+        resp = http_client.post(
+            "/set_variable_storage",
+            json_data={"function_address": addr, "variable_name": "return", "storage": "auto"},
+        )
+        if resp.status_code == 404:
+            pytest.skip("/set_variable_storage not deployed")
+        if "could not parse" in resp.text.lower():
+            pytest.skip("set_variable_storage auto/data_type enhancements not deployed")
+        return addr, resp
+
+    def test_auto_storage_recognized(self, http_client):
+        """storage='auto' is a recognized keyword that manages custom storage
+        rather than being parsed as a location."""
+        _addr, resp = self._supports_enhancements(http_client)
+        low = resp.text.lower()
+        assert "could not parse" not in low
+        # Either it disabled custom storage or reported nothing-to-do.
+        assert "custom variable storage" in low or "automatic" in low
+
+    def test_unknown_data_type_rejected(self, http_client):
+        """A bogus data_type is rejected (before any storage parse/mutation)."""
+        addr, _resp = self._supports_enhancements(http_client)  # confirms new build
+        resp = http_client.post(
+            "/set_variable_storage",
+            json_data={
+                "function_address": addr,
+                "variable_name": "return",
+                "storage": "zzz",
+                "data_type": "NotARealType_zzz123",
+            },
+        )
+        assert "unknown data type" in resp.text.lower()

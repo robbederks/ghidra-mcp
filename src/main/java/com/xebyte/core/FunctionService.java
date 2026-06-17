@@ -2031,7 +2031,7 @@ public class FunctionService {
      * @param storageSpec Storage specification (e.g., "Stack[-0x10]:4", "EBP:4", "EAX:4")
      * @return Success or error message
      */
-    @McpTool(path = "/set_variable_storage", method = "POST", description = "Assign a custom storage location (register, register pair, stack slot, or memory address) to a function parameter, local variable, or the return value. This enables custom variable storage on the function (so the decompiler stops auto-assigning from the calling convention) and is how you express __usercall-style layouts where a value lives in a specific register. To change a parameter/return TYPE without moving it, use set_function_prototype/set_parameter_type instead. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "function")
+    @McpTool(path = "/set_variable_storage", method = "POST", description = "Assign a custom storage location (register, register pair, stack slot, or memory address) to a function parameter, local variable, or the return value — and optionally retype it in the same call via `data_type`. This enables custom variable storage on the function (so the decompiler stops auto-assigning from the calling convention) and is how you express __usercall-style layouts where a value lives in a specific register. IMPORTANT: a return value's decompiled WIDTH follows its data type, so to surface a void/byte function that actually returns a multi-byte register set (e.g. R4R5R6R7), pass both storage and a matching `data_type` (e.g. undefined4). Pass storage=\"auto\" to turn OFF custom storage and revert the whole function to calling-convention defaults. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "function")
     public Response setVariableStorage(
             @Param(value = "function_address", paramType = "address", source = ParamSource.BODY,
                    description = "Address in the program. Accepts 0x<hex> (default space) or <space>:<hex> "
@@ -2041,12 +2041,20 @@ public class FunctionService {
                                + "address is unambiguous.") String functionAddrStr,
             @Param(value = "variable_name", source = ParamSource.BODY,
                    description = "Name of the parameter or local variable to relocate, or \"return\" "
-                               + "(or \"<RETURN>\") to set the return-value storage.") String variableName,
+                               + "(or \"<RETURN>\") to set the return-value storage. Ignored when "
+                               + "storage=\"auto\".") String variableName,
             @Param(value = "storage", source = ParamSource.BODY,
                    description = "Storage location. One of: a register name (EAX, R7, DPTR); a register "
                                + "pair high:low (EDX:EAX); a stack slot stack:<offset> (stack:0x8, "
-                               + "stack:-0x4); or a memory address ram:0x1234 / <space>:<hex>. Storage is "
-                               + "fit to the variable's current data type.") String storageSpec,
+                               + "stack:-0x4); a memory address ram:0x1234 / <space>:<hex>; or \"auto\" "
+                               + "(also \"default\"/\"none\") to disable custom storage and revert the "
+                               + "function to its calling-convention defaults. Storage is fit to the "
+                               + "variable's data type.") String storageSpec,
+            @Param(value = "data_type", source = ParamSource.BODY, defaultValue = "",
+                   description = "Optional. Retype the variable/return to this type while relocating it "
+                               + "(e.g. undefined4, ushort, byte *). Required to widen a return: the "
+                               + "decompiled return width follows the type, not the storage. Omit to keep "
+                               + "the current type.") String dataTypeName,
             @Param(value = "program", defaultValue = "") String programName) {
         ServiceUtils.ProgramOrError pe = ServiceUtils.getProgramOrError(programProvider, programName);
         if (pe.hasError()) return pe.error();
@@ -2079,6 +2087,23 @@ public class FunctionService {
                     return null;
                 }
 
+                // storage="auto"/"default"/"none": turn OFF custom variable storage
+                // so the whole function reverts to calling-convention-derived storage.
+                String spec = storageSpec.trim();
+                if (spec.equalsIgnoreCase("auto") || spec.equalsIgnoreCase("default")
+                        || spec.equalsIgnoreCase("none")) {
+                    if (func.hasCustomVariableStorage()) {
+                        func.setCustomVariableStorage(false);
+                        resultMsg.append("Disabled custom variable storage on ").append(func.getName())
+                                 .append("; parameters and return revert to calling-convention defaults.");
+                    } else {
+                        resultMsg.append("Function ").append(func.getName())
+                                 .append(" already uses automatic (calling-convention) storage; nothing to do.");
+                    }
+                    success.set(true);
+                    return null;
+                }
+
                 // Resolve the target (return value or a named param/local) and the
                 // data type the storage must hold (used to size stack/memory slots).
                 Variable targetVar = null;
@@ -2099,6 +2124,20 @@ public class FunctionService {
                         return null;
                     }
                     dt = targetVar.getDataType();
+                }
+
+                // Optional retype: a return value's decompiled width follows its type,
+                // so widening a return needs both storage and a matching data_type.
+                final boolean retyped = dataTypeName != null && !dataTypeName.trim().isEmpty();
+                if (retyped) {
+                    DataType resolved = ServiceUtils.resolveDataType(
+                        program.getDataTypeManager(), dataTypeName.trim());
+                    if (resolved == null) {
+                        resultMsg.append("Error: Unknown data type '").append(dataTypeName.trim())
+                                 .append("'");
+                        return null;
+                    }
+                    dt = resolved;
                 }
 
                 int size = (dt != null && dt.getLength() > 0) ? dt.getLength() : 1;
@@ -2133,6 +2172,9 @@ public class FunctionService {
                         targetVar.setDataType(dt, newStorage, true, SourceType.USER_DEFINED);
                         resultMsg.append("Set storage for '").append(variableName).append("': ")
                                  .append(oldStorage).append(" -> ").append(newStorage.toString());
+                    }
+                    if (retyped) {
+                        resultMsg.append(" (retyped to ").append(dt.getName()).append(")");
                     }
                     if (enabledNow) {
                         resultMsg.append("\n(Enabled custom variable storage on ").append(func.getName())
@@ -2235,8 +2277,13 @@ public class FunctionService {
         return neg ? -v : v;
     }
 
+    // Back-compat overloads for callers that predate the data_type parameter.
+    public Response setVariableStorage(String functionAddrStr, String variableName, String storageSpec, String programName) {
+        return setVariableStorage(functionAddrStr, variableName, storageSpec, "", programName);
+    }
+
     public Response setVariableStorage(String functionAddrStr, String variableName, String storageSpec) {
-        return setVariableStorage(functionAddrStr, variableName, storageSpec, null);
+        return setVariableStorage(functionAddrStr, variableName, storageSpec, "", null);
     }
 
     // ========================================================================
