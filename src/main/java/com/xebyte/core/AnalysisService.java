@@ -762,7 +762,7 @@ public class AnalysisService {
         return searchBytePatterns(pattern, mask, null);
     }
 
-    @McpTool(path = "/search_byte_patterns", description = "Search for byte patterns with masks", category = "analysis")
+    @McpTool(path = "/search_byte_patterns", description = "Search for byte patterns with masks. Matches are returned as a compact columnar table {columns,rows}.", category = "analysis")
     public Response searchBytePatterns(
             @Param(value = "pattern", description = "Hex byte pattern") String pattern,
             @Param(value = "mask", description = "Pattern mask (omit or leave empty for exact match)", defaultValue = "") String mask,
@@ -846,7 +846,7 @@ public class AnalysisService {
                 matches.add(JsonHelper.mapOf("note", "No matches found"));
             }
 
-            return Response.ok(matches);
+            return Response.ok(JsonHelper.table(matches));
         } catch (Exception e) {
             return Response.err(e.getMessage());
         }
@@ -867,8 +867,9 @@ public class AnalysisService {
         description = "Search for instructions by mnemonic and/or operand substring. "
             + "Complement to /search_byte_patterns (byte-level); this matches after Ghidra "
             + "has parsed instructions, so you can search for 'mov' + '[ecx+0xD0]' without "
-            + "knowing the encoding. Case-insensitive substring match on both fields. Returns "
-            + "{address, function, mnemonic, operands, bytes} per match.",
+            + "knowing the encoding. Case-insensitive substring match on both fields. `matches` is a "
+            + "compact columnar table {columns:[address, function, mnemonic, operands, bytes], rows:[...]} "
+            + "(zip columns with each row to reconstruct per-match objects).",
         category = "analysis")
     public Response searchInstructions(
             @Param(value = "mnemonic", defaultValue = "",
@@ -961,11 +962,10 @@ public class AnalysisService {
                 Function containing = funcManager.getFunctionContaining(inst.getAddress());
 
                 Map<String, Object> rec = new LinkedHashMap<>();
-                rec.put("address", ServiceUtils.addressToJson(inst.getAddress(), program));
+                rec.put("address", ServiceUtils.addressString(inst.getAddress(), program));
                 rec.put("function", containing == null ? null : containing.getName());
                 rec.put("mnemonic", inst.getMnemonicString());
                 rec.put("operands", operandStr);
-                rec.put("length", inst.getLength());
                 rec.put("bytes", hex.toString());
                 matches.add(rec);
 
@@ -976,7 +976,7 @@ public class AnalysisService {
             }
 
             Map<String, Object> result = new LinkedHashMap<>();
-            result.put("matches", matches);
+            result.put("matches", JsonHelper.table(matches));
             result.put("match_count", matches.size());
             result.put("instructions_scanned", scanned);
             result.put("truncated", truncated);
@@ -1003,7 +1003,7 @@ public class AnalysisService {
         return findSimilarFunctions(targetFunction, threshold, null);
     }
 
-    @McpTool(path = "/find_similar_functions", description = "Find structurally similar functions", category = "analysis")
+    @McpTool(path = "/find_similar_functions", description = "Find structurally similar functions. The \"similar_functions\" array is a compact columnar table {columns,rows}.", category = "analysis")
     public Response findSimilarFunctions(
             @Param(value = "target_function", description = "Function name") String targetFunction,
             @Param(value = "threshold", defaultValue = "0.8", description = "Similarity threshold") double threshold,
@@ -1071,7 +1071,7 @@ public class AnalysisService {
                 ),
                 "threshold", threshold,
                 "matches_found", similarFunctions.size(),
-                "similar_functions", similarFunctions
+                "similar_functions", JsonHelper.table(similarFunctions)
             ));
         } catch (Exception e) {
             return Response.err(e.getMessage());
@@ -1086,7 +1086,7 @@ public class AnalysisService {
         return analyzeControlFlow(functionName, null);
     }
 
-    @McpTool(path = "/analyze_control_flow", description = "Analyze function control flow complexity", category = "analysis")
+    @McpTool(path = "/analyze_control_flow", description = "Analyze function control flow complexity. The \"basic_block_details\" array is a compact columnar table {columns,rows}.", category = "analysis")
     public Response analyzeControlFlow(
             @Param(value = "function_name", description = "Function name") String functionName,
             @Param(value = "program", description = "Target program name (omit to use the active program — always specify when multiple programs are open)", defaultValue = "") String programName) {
@@ -1239,7 +1239,7 @@ public class AnalysisService {
                 "calls", callCount,
                 "returns", returnCount
             ));
-            cfResult.put("basic_block_details", blockDetails);
+            cfResult.put("basic_block_details", JsonHelper.table(blockDetails));
             return Response.ok(cfResult);
         } catch (Exception e) {
             return Response.err(e.getMessage());
@@ -2417,7 +2417,7 @@ public class AnalysisService {
     /**
      * NEW v1.6.0: Enhanced function search with filtering and sorting
      */
-    @McpTool(path = "/search_functions_enhanced", description = "Advanced function search with filtering", category = "analysis")
+    @McpTool(path = "/search_functions_enhanced", description = "Advanced function search with filtering. The \"results\" array is a compact columnar table {columns,rows}.", category = "analysis")
     public Response searchFunctionsEnhanced(
             @Param(value = "name_pattern", description = "Name pattern (omit to match all)", defaultValue = "") String namePattern,
             @Param(value = "min_xrefs", description = "Minimum xref count filter (omit for no minimum)", defaultValue = "") Integer minXrefs,
@@ -2527,7 +2527,7 @@ public class AnalysisService {
                         "total", total,
                         "offset", offset,
                         "limit", limit,
-                        "results", page
+                        "results", JsonHelper.table(page)
                     )));
 
                 } catch (Exception e) {
@@ -4425,7 +4425,7 @@ public class AnalysisService {
              description = "Find gaps of undefined/unanalyzed bytes in executable memory not covered by any "
                          + "function body. Useful for discovering missed functions in firmware and embedded "
                          + "binaries. Reports each contiguous uncovered range with its size, content type, "
-                         + "and the nearest functions on each side.",
+                         + "and the nearest functions on each side. The \"gaps\" array is a compact columnar table {columns,rows}.",
              category = "analysis")
     public Response findCodeGaps(
             @Param(value = "min_size", defaultValue = "1",
@@ -4516,7 +4516,7 @@ public class AnalysisService {
                         "total",  total,
                         "offset", offset,
                         "limit",  limit,
-                        "gaps",   page
+                        "gaps",   JsonHelper.table(page)
                     )));
 
                 } catch (Exception e) {
@@ -4545,8 +4545,9 @@ public class AnalysisService {
              description = "Trace how a value propagates through a function using the decompiler's PCode graph. "
                          + "Direction 'backward' walks producers (Varnode.getDef); 'forward' walks consumers "
                          + "(Varnode.getDescendants). Terminates at constants, parameters, call boundaries, or max_steps. "
-                         + "Phi (MULTIEQUAL) nodes are summarized rather than recursed. On programs with multiple "
-                         + "address spaces, prefix addresses with the space name (mem:1000).",
+                         + "Phi (MULTIEQUAL) nodes are summarized rather than recursed. The 'chain' field is a "
+                         + "compact columnar table {columns,rows} (zip columns with each row to reconstruct per-step objects). "
+                         + "On programs with multiple address spaces, prefix addresses with the space name (mem:1000).",
              category = "analysis")
     public Response analyzeDataflow(
             @Param(value = "address", paramType = "address",
@@ -4634,7 +4635,7 @@ public class AnalysisService {
 
                     data.put("direction", backward ? "backward" : "forward");
                     data.put("max_steps", stepCap);
-                    data.put("chain", chain.steps);
+                    data.put("chain", JsonHelper.table(chain.steps));
                     data.put("terminated", chain.terminationReason);
                     data.put("truncated", chain.truncated);
 
@@ -4961,8 +4962,7 @@ public class AnalysisService {
         // consistently with the rest of the API.
         Address seq = op.getSeqnum() != null ? op.getSeqnum().getTarget() : null;
         if (seq != null && program != null) {
-            Map<String, Object> seqJson = ServiceUtils.addressToJson(seq, program);
-            m.put("seq", seqJson);
+            m.put("seq", ServiceUtils.addressString(seq, program));
         }
         List<Map<String, Object>> inputs = new ArrayList<>();
         Varnode[] vis = op.getInputs();
@@ -4975,7 +4975,7 @@ public class AnalysisService {
     }
 
     @McpTool(path = "/get_function_pcode",
-             description = "Dump raw P-code for a function (issue #192). Returns low (basic-iter) and high (HighFunction) P-code with basic blocks and varnodes. Granularity controls output: 'basic' = basic-block iter only (less memory), 'high' = HighFunction graph (default; includes both BB iter and op-iter). For P-code emulators / ML pipelines / alternative decompilers.",
+             description = "Dump raw P-code for a function (issue #192). Returns low (basic-iter) and high (HighFunction) P-code with basic blocks and varnodes. Each basic block's 'pcodes' and the top-level 'high_pcodes' are compact columnar tables {columns,rows} (zip columns with each row to reconstruct per-op objects; the inputs/output cells stay as full varnode objects so no SSA info is lost). Granularity controls output: 'basic' = basic-block iter only (less memory), 'high' = HighFunction graph (default; includes both BB iter and op-iter). For P-code emulators / ML pipelines / alternative decompilers.",
              category = "analysis")
     public Response getFunctionPcode(
             @Param(value = "function_address", paramType = "address",
@@ -5022,14 +5022,17 @@ public class AnalysisService {
         try {
             for (var bb : hf.getBasicBlocks()) {
                 Map<String, Object> bbMap = new LinkedHashMap<>();
-                bbMap.put("start", ServiceUtils.addressToJson(bb.getStart(), program));
-                bbMap.put("stop", ServiceUtils.addressToJson(bb.getStop(), program));
+                bbMap.put("start", ServiceUtils.addressString(bb.getStart(), program));
+                bbMap.put("stop", ServiceUtils.addressString(bb.getStop(), program));
                 List<Map<String, Object>> bbOps = new ArrayList<>();
                 var iter = bb.getIterator();
                 while (iter.hasNext()) {
                     bbOps.add(pcodeOpToJson(iter.next(), program));
                 }
-                bbMap.put("pcodes", bbOps);
+                // Columnar table {columns,rows} per block: kills the repeated
+                // per-op key set (mnemonic/opcode/seq/inputs/output) while
+                // keeping every value (varnode objects preserved intact).
+                bbMap.put("pcodes", JsonHelper.table(bbOps));
                 basicBlocks.add(bbMap);
             }
         } catch (Exception e) {
@@ -5049,7 +5052,7 @@ public class AnalysisService {
             } catch (Exception e) {
                 out.put("high_pcodes_error", e.getMessage());
             }
-            out.put("high_pcodes", highOps);
+            out.put("high_pcodes", JsonHelper.table(highOps));
         }
 
         return Response.ok(out);

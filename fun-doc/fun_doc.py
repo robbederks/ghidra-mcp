@@ -1668,6 +1668,22 @@ def _fetch_programs(project_folder):
     return programs
 
 
+def detable(value):
+    """Expand a compact columnar table {"columns":[...], "rows":[[...]]} back into
+    a list of dicts. Several Ghidra MCP endpoints now return array-of-objects
+    payloads in this token-lean shape (the field names are emitted once in
+    ``columns`` instead of being repeated in every element). Pass-through if
+    ``value`` is already a list (older server build) or anything unexpected.
+    """
+    if isinstance(value, dict) and "columns" in value and "rows" in value:
+        cols = value.get("columns") or []
+        rows = value.get("rows") or []
+        return [dict(zip(cols, row)) for row in rows]
+    if isinstance(value, list):
+        return value
+    return []
+
+
 def _fetch_function_list(prog_path):
     """Fetch enhanced function list for a program. Returns list or None.
 
@@ -1692,7 +1708,7 @@ def _fetch_function_list(prog_path):
                 funcs_resp = json.loads(funcs_resp)
             except (json.JSONDecodeError, TypeError):
                 return None if not all_funcs else all_funcs
-        page = funcs_resp.get("functions") or []
+        page = detable(funcs_resp.get("functions"))
         if not page:
             break
         all_funcs.extend(page)
@@ -2442,7 +2458,7 @@ def populate_call_graph(state, prog_path):
         print(f"  WARNING: Could not fetch call graph for {prog_path}", file=sys.stderr)
         return 0
 
-    edges = resp.get("edges", [])
+    edges = detable(resp.get("edges"))
     # Build adjacency: caller_addr → set of callee_addrs
     adjacency = defaultdict(set)
     for edge in edges:

@@ -16,6 +16,17 @@ import pytest
 import requests
 
 
+def detable(value):
+    """Expand a compact columnar table {"columns":[...],"rows":[[...]]} into a
+    list of dicts; pass-through for legacy list payloads."""
+    if isinstance(value, dict) and "columns" in value and "rows" in value:
+        cols = value.get("columns") or []
+        return [dict(zip(cols, row)) for row in (value.get("rows") or [])]
+    if isinstance(value, list):
+        return value
+    return []
+
+
 @pytest.mark.requires_program
 def test_list_functions_enhanced_pagination_matches_count(server_url, server_available):
     """Walking list_functions_enhanced in pages must return exactly as many
@@ -59,7 +70,7 @@ def test_list_functions_enhanced_pagination_matches_count(server_url, server_ava
             timeout=60,
         )
         assert r.status_code == 200
-        page = r.json().get("functions") or []
+        page = detable(r.json().get("functions"))
         seen.extend(page)
         if len(page) < PAGE_SIZE:
             break
@@ -139,5 +150,6 @@ def test_list_functions_offset_beyond_end_returns_empty(server_url, server_avail
     )
     assert r.status_code == 200
     data = r.json()
-    assert isinstance(data.get("functions"), list)
-    assert len(data["functions"]) == 0
+    functions = detable(data.get("functions"))
+    assert isinstance(functions, list)
+    assert len(functions) == 0

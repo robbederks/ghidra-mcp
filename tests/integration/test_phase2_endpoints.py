@@ -20,6 +20,17 @@ import uuid
 import json
 
 
+def detable(value):
+    """Expand a compact columnar table {"columns":[...],"rows":[[...]]} into a
+    list of dicts; pass-through for legacy list payloads."""
+    if isinstance(value, dict) and "columns" in value and "rows" in value:
+        cols = value.get("columns") or []
+        return [dict(zip(cols, row)) for row in (value.get("rows") or [])]
+    if isinstance(value, list):
+        return value
+    return []
+
+
 class TestBatchComments:
     """Test batch comment setting endpoint."""
 
@@ -89,7 +100,7 @@ class TestSearchFunctionsEnhanced:
         data = response.json()
         assert "total" in data
         assert "results" in data
-        for item in data["results"]:
+        for item in detable(data["results"]):
             assert "isThunk" in item, f"missing isThunk: {item}"
             assert "isExternal" in item, f"missing isExternal: {item}"
             assert isinstance(item["isThunk"], bool)
@@ -125,7 +136,7 @@ class TestSearchFunctionsEnhanced:
         })
         assert response.status_code == 200
         data = response.json()
-        for item in data["results"]:
+        for item in detable(data["results"]):
             assert item["isThunk"] is True, f"non-thunk leaked through is_thunk=true: {item}"
 
     @pytest.mark.requires_program
@@ -137,7 +148,7 @@ class TestSearchFunctionsEnhanced:
         })
         assert response.status_code == 200
         data = response.json()
-        for item in data["results"]:
+        for item in detable(data["results"]):
             assert item["isThunk"] is False, f"thunk leaked through is_thunk=false: {item}"
 
     @pytest.mark.requires_program
@@ -149,7 +160,7 @@ class TestSearchFunctionsEnhanced:
         })
         assert response.status_code == 200
         data = response.json()
-        for item in data["results"]:
+        for item in detable(data["results"]):
             assert item["isExternal"] is True, f"non-external leaked through is_external=true: {item}"
 
     @pytest.mark.requires_program
@@ -161,7 +172,7 @@ class TestSearchFunctionsEnhanced:
         })
         assert response.status_code == 200
         data = response.json()
-        for item in data["results"]:
+        for item in detable(data["results"]):
             assert item["isExternal"] is False, f"external leaked through is_external=false: {item}"
 
     @pytest.mark.requires_program
@@ -175,7 +186,7 @@ class TestSearchFunctionsEnhanced:
         })
         assert response.status_code == 200
         data = response.json()
-        for item in data["results"]:
+        for item in detable(data["results"]):
             assert item["isThunk"] is False
             assert item["isExternal"] is False
             assert item["xref_count"] >= 1
@@ -391,8 +402,9 @@ class TestPhase2Integration:
         if "results" in response.text and "name" in response.text:
             try:
                 data = response.json()
-                if data.get("results") and len(data["results"]) > 0:
-                    func_name = data["results"][0]["name"]
+                results = detable(data.get("results"))
+                if results:
+                    func_name = results[0]["name"]
                     # Analyze the found function
                     response = http_client.get("/analyze_function_complete", params={
                         "name": func_name

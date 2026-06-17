@@ -574,7 +574,7 @@ public class XrefCallGraphService {
     /**
      * Get the complete call graph for the entire program
      */
-    @McpTool(path = "/get_full_call_graph", description = "Get entire program call graph", category = "xref")
+    @McpTool(path = "/get_full_call_graph", description = "Get entire program call graph. For format=json_edges, the \"edges\" array is a compact columnar table {columns,rows}.", category = "xref")
     public Response getFullCallGraph(
             @Param(value = "format", defaultValue = "edges", description = "Output format: edges (text), adjacency, dot, mermaid, json_edges (address-based JSON for automation)") String format,
             @Param(value = "limit", defaultValue = "1000", description = "Max edges to return. 0 = unlimited.") int limit,
@@ -594,7 +594,7 @@ public class XrefCallGraphService {
         Map<String, Set<String>> callGraph = new HashMap<>();
         // Address-based edge list for the json_edges format — built alongside
         // the name-based graph so we iterate instructions only once.
-        List<Map<String, String>> addressEdges = "json_edges".equals(format) ? new ArrayList<>() : null;
+        List<Map<String, Object>> addressEdges = "json_edges".equals(format) ? new ArrayList<>() : null;
         int relationshipCount = 0;
 
         // Build complete call graph
@@ -626,7 +626,7 @@ public class XrefCallGraphService {
                                 if (callees.add(calleeName)) {
                                     relationshipCount++;
                                     if (addressEdges != null) {
-                                        addressEdges.add(Map.of(
+                                        addressEdges.add(JsonHelper.mapOf(
                                             "caller_addr", callerAddr,
                                             "callee_addr", targetFunc.getEntryPoint().toString(),
                                             "caller_name", functionName,
@@ -655,7 +655,7 @@ public class XrefCallGraphService {
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("edge_count", addressEdges != null ? addressEdges.size() : 0);
             result.put("caller_count", callGraph.size());
-            result.put("edges", addressEdges != null ? addressEdges : List.of());
+            result.put("edges", JsonHelper.table(addressEdges != null ? addressEdges : List.of()));
             return Response.ok(result);
         } else if ("dot".equals(format)) {
             sb.append("digraph CallGraph {\n");
@@ -1114,7 +1114,7 @@ public class XrefCallGraphService {
         return getBulkXrefs(addressesObj, null);
     }
 
-    @McpTool(path = "/get_bulk_xrefs", method = "POST", description = "Batch cross-reference retrieval", category = "xref")
+    @McpTool(path = "/get_bulk_xrefs", method = "POST", description = "Batch cross-reference retrieval. Returns a map of each requested address to a compact columnar table {columns:[from,type], rows:[...]} of the references to it (zip columns with each row to reconstruct per-xref objects).", category = "xref")
     public Response getBulkXrefs(
             @Param(value = "addresses", source = ParamSource.BODY) Object addressesObj,
             @Param(value = "program", defaultValue = "") String programName) {
@@ -1155,11 +1155,7 @@ public class XrefCallGraphService {
                             Reference ref = refIter.next();
                             Address fromAddr = ref.getFromAddress();
                             Map<String, Object> refItem = new LinkedHashMap<>();
-                            refItem.put("from", fromAddr.toString(false));
-                            if (ServiceUtils.getPhysicalSpaceCount(program) > 1) {
-                                refItem.put("from_full", fromAddr.toString());
-                                refItem.put("from_space", fromAddr.getAddressSpace().getName());
-                            }
+                            refItem.put("from", ServiceUtils.addressString(fromAddr, program));
                             refItem.put("type", ref.getReferenceType().getName());
                             refsList.add(refItem);
                         }
@@ -1168,7 +1164,9 @@ public class XrefCallGraphService {
                     // Address parsing failed, return empty array
                 }
 
-                resultMap.put(addrStr, refsList);
+                // Compact columnar table {columns,rows} per address instead of an
+                // array of repeated-key {from,type} objects.
+                resultMap.put(addrStr, JsonHelper.table(refsList));
             }
 
             return Response.ok(resultMap);

@@ -9,6 +9,7 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -27,6 +28,47 @@ public final class JsonHelper {
     /** Serialize any object to JSON string. */
     public static String toJson(Object obj) {
         return GSON.toJson(obj);
+    }
+
+    /**
+     * Compact a homogeneous list of record maps into a columnar "table" so the
+     * field names are emitted once in {@code columns} instead of being repeated
+     * in every element. Cuts token cost dramatically for large arrays while
+     * preserving every value.
+     *
+     * <p>Output shape:
+     * <pre>{@code {"columns":["address","name",...], "rows":[["1000","Foo",...], ...]}}</pre>
+     *
+     * <p>Column order is the first-seen key order across all records (so the
+     * most common element shape leads). Records missing a column contribute a
+     * {@code null} cell, so the table stays rectangular and zip-decodable.
+     * An empty input yields {@code {"columns":[],"rows":[]}}.
+     *
+     * <p>Decode on the client by zipping {@code columns} with each row, e.g.
+     * {@code [dict(zip(cols, r)) for r in rows]}.
+     */
+    public static Map<String, Object> table(List<? extends Map<String, Object>> records) {
+        LinkedHashSet<String> columnSet = new LinkedHashSet<>();
+        if (records != null) {
+            for (Map<String, Object> record : records) {
+                if (record != null) columnSet.addAll(record.keySet());
+            }
+        }
+        List<String> columns = new ArrayList<>(columnSet);
+        List<List<Object>> rows = new ArrayList<>(records == null ? 0 : records.size());
+        if (records != null) {
+            for (Map<String, Object> record : records) {
+                List<Object> row = new ArrayList<>(columns.size());
+                for (String column : columns) {
+                    row.add(record == null ? null : record.get(column));
+                }
+                rows.add(row);
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("columns", columns);
+        out.put("rows", rows);
+        return out;
     }
 
     /** Build a LinkedHashMap from alternating key-value pairs (preserves field order). */

@@ -36,6 +36,18 @@ import pytest
 import json
 
 
+def detable(value):
+    """Expand a compact columnar table {"columns":[...], "rows":[[...]]} into a
+    list of dicts. Several endpoints now return array-of-objects payloads in
+    this token-lean shape. Pass-through for legacy list payloads."""
+    if isinstance(value, dict) and "columns" in value and "rows" in value:
+        cols = value.get("columns") or []
+        return [dict(zip(cols, row)) for row in (value.get("rows") or [])]
+    if isinstance(value, list):
+        return value
+    return []
+
+
 # Mark all tests as readonly integration tests
 pytestmark = [
     pytest.mark.integration,
@@ -519,25 +531,23 @@ class TestFunctionAnalysis:
         assert isinstance(data["basic_blocks"], list)
         # `basic` granularity omits the high-PcodeOp graph
         assert "high_pcodes" not in data
-        # Validate shape of the first basic block (if any). Start/stop are
-        # nested ServiceUtils.addressToJson objects with a guaranteed
-        # 'address' key (and optional address_full/address_space on multi-
-        # space binaries).
+        # Validate shape of the first basic block (if any). Start/stop are now
+        # flat space-qualified address strings (e.g. "CODE:0006"); each block's
+        # `pcodes` is a compact columnar table {columns,rows}.
         if data["basic_blocks"]:
             bb = data["basic_blocks"][0]
-            assert "start" in bb and isinstance(bb["start"], dict)
-            assert "stop" in bb and isinstance(bb["stop"], dict)
-            assert "address" in bb["start"]
-            assert "address" in bb["stop"]
+            assert "start" in bb and isinstance(bb["start"], str)
+            assert "stop" in bb and isinstance(bb["stop"], str)
             assert "pcodes" in bb
-            assert isinstance(bb["pcodes"], list)
+            ops = detable(bb["pcodes"])
+            assert isinstance(ops, list)
             # PcodeOps carry mnemonic + opcode + SSA varnode flags
-            if bb["pcodes"]:
-                op = bb["pcodes"][0]
+            if ops:
+                op = ops[0]
                 assert "mnemonic" in op
                 assert "opcode" in op
                 assert "inputs" in op
-                # SSA flags now present on every varnode
+                # SSA flags still present on every (object-valued) varnode cell
                 if op["inputs"]:
                     vn = op["inputs"][0]
                     for key in ("is_addrtied", "is_hash", "is_persistent", "merge_group"):
@@ -557,7 +567,8 @@ class TestFunctionAnalysis:
         data = response.json()
         assert "basic_blocks" in data
         assert "high_pcodes" in data
-        assert isinstance(data["high_pcodes"], list)
+        # high_pcodes is now a compact columnar table {columns,rows}.
+        assert isinstance(detable(data["high_pcodes"]), list)
 
 
 class TestXRefEndpoints:
@@ -667,18 +678,20 @@ class TestSearchInstructions:
             "operand_filter",
         ):
             assert key in body, f"missing top-level field: {key}"
-        assert isinstance(body["matches"], list)
+        # matches is now a compact columnar table {columns,rows}.
+        matches = detable(body["matches"])
+        assert isinstance(matches, list)
         # Both filter-echo keys are always present; empty string means "no filter".
         assert body["mnemonic_filter"] == "ret"
         assert body["operand_filter"] == ""
 
-        # Each match record carries the documented shape.
-        for m in body["matches"]:
-            for key in ("address", "function", "mnemonic", "operands", "length", "bytes"):
+        # Each match record carries the documented shape (length dropped — it's
+        # derivable from bytes).
+        for m in matches:
+            for key in ("address", "function", "mnemonic", "operands", "bytes"):
                 assert key in m, f"match missing field: {key}"
-            assert isinstance(m["length"], int) and m["length"] >= 1
-            # bytes is lowercase hex with exactly 2 chars per byte.
-            assert len(m["bytes"]) == m["length"] * 2
+            # bytes is lowercase hex with an even number of chars (2 per byte).
+            assert len(m["bytes"]) % 2 == 0 and len(m["bytes"]) >= 2
             assert m["bytes"] == m["bytes"].lower()
             # mnemonic match is case-insensitive but exact.
             assert m["mnemonic"].lower() == "ret"
@@ -736,7 +749,7 @@ class TestSearchInstructions:
         assert r.status_code == 200
         body = r.json()
         assert body["match_count"] == 0
-        assert body["matches"] == []
+        assert detable(body["matches"]) == []
         assert body["operand_filter"] == "zzznonexistentzzz"
 
 

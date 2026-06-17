@@ -27,6 +27,51 @@ public final class ServiceUtils {
     private ServiceUtils() {} // Prevent instantiation
 
     // ========================================================================
+    // Compact instruction listing
+    // ========================================================================
+
+    /**
+     * Lowercase hex string of an instruction's raw bytes (e.g. {@code "1250db"}),
+     * or {@code "??"} if the bytes can't be read. Used by the compact listing
+     * format so emulator/encoder callers (#205) keep the raw encoding without a
+     * separate per-instruction JSON object.
+     */
+    public static String instructionBytesHex(ghidra.program.model.listing.Instruction instr) {
+        try {
+            byte[] bytes = instr.getBytes();
+            StringBuilder hex = new StringBuilder(bytes.length * 2);
+            for (byte b : bytes) {
+                hex.append(String.format("%02x", b));
+            }
+            return hex.toString();
+        } catch (Exception e) {
+            return "??";
+        }
+    }
+
+    /**
+     * Format a single instruction as one compact, Ghidra-listing-style line:
+     * <pre>{@code <address>  <hexbytes>  <mnemonic operands>[  ; comment]}</pre>
+     * e.g. {@code "CODE:0006  1250db  LCALL 0x50db"}.
+     *
+     * <p>This is the per-line building block for the disassembly endpoints'
+     * single newline-joined {@code listing} string, which replaces the old
+     * array-of-objects (one JSON object per instruction, five repeated keys)
+     * and so carries the same information (address, raw bytes, mnemonic,
+     * operands, optional comment) at a fraction of the token cost.
+     */
+    public static String instructionLine(ghidra.program.model.listing.Instruction instr, String comment) {
+        StringBuilder line = new StringBuilder();
+        line.append(instr.getAddress())
+            .append("  ").append(instructionBytesHex(instr))
+            .append("  ").append(instr.toString());
+        if (comment != null && !comment.isEmpty()) {
+            line.append("  ; ").append(comment);
+        }
+        return line.toString();
+    }
+
+    // ========================================================================
     // JSON Encoding/Decoding
     // ========================================================================
 
@@ -692,6 +737,23 @@ public final class ServiceUtils {
      * Includes "address_full" and "address_space" only when the program has >1 physical space.
      * If program is null, emits only the "address" field.
      */
+    /**
+     * Flat single-string form of an address for compact (columnar/listing)
+     * responses: {@code "CODE:0006"} on multi-space programs (space-qualified,
+     * round-trips through parseAddress), or plain {@code "0006"} on single-space
+     * programs. Replaces the {@link #addressToJson} nested object in token-lean
+     * endpoints — the space-qualified string carries the same information as the
+     * {@code address}/{@code address_full}/{@code address_space} triple without
+     * repeating three keys per row.
+     */
+    public static String addressString(Address address, Program program) {
+        if (address == null) return null;
+        if (program == null || getPhysicalSpaceCount(program) <= 1) {
+            return address.toString(false);
+        }
+        return address.toString();
+    }
+
     public static Map<String, Object> addressToJson(Address address, Program program) {
         String plainHex = address.toString(false);
         if (program == null || getPhysicalSpaceCount(program) <= 1) {
