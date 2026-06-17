@@ -1670,7 +1670,7 @@ public class FunctionService {
     }
 
     @McpTool(path = "/list_class_members", method = "GET",
-            description = "List the member functions of a C++ class. A function counts as a member if it lives in the class's namespace (e.g. after set_function_this_type re-parents it) OR its implicit 'this' parameter types as '<class> *'. Each result reports how it matched (namespace / this_type / both). Replaces the manual 'search __thiscall functions then read each signature' workflow.",
+            description = "List the member functions of a C++ class. A function counts as a member if it lives in the class's namespace (e.g. after set_function_this_type re-parents it) OR its implicit 'this' parameter types as '<class> *'. Each result reports how it matched (namespace / this_type / both). Replaces the manual 'search __thiscall functions then read each signature' workflow. The 'members' key is a compact columnar table {columns, rows} rather than an array of objects.",
             category = "function")
     public Response listClassMembers(
             @Param(value = "class_name",
@@ -1740,7 +1740,7 @@ public class FunctionService {
                 result.put("total_members", total);
                 result.put("offset", from);
                 result.put("limit", pageLimit);
-                result.put("members", page);
+                result.put("members", JsonHelper.table(page));
                 if (total == 0) {
                     result.put("note", "No members found. A function matches if it is in the '" + cls
                             + "' namespace or its 'this' parameter types as '" + cls + " *'. Create the "
@@ -2134,7 +2134,7 @@ public class FunctionService {
     /**
      * Get detailed information about a function's variables (parameters and locals).
      */
-    @McpTool(path = "/get_function_variables", description = "List all variables in a function. Accepts function_name (by name) or address (by address). If both are given, address takes precedence. Useful when the function was recently renamed — use address to avoid name-lookup race conditions.", category = "function")
+    @McpTool(path = "/get_function_variables", description = "List all variables in a function. Accepts function_name (by name) or address (by address). If both are given, address takes precedence. Useful when the function was recently renamed — use address to avoid name-lookup race conditions. The 'parameters' and 'locals' keys are each a compact columnar table {columns, rows} rather than an array of objects.", category = "function")
     public Response getFunctionVariables(
             @Param(value = "function_name", description = "Function name (ignored if address is provided)", defaultValue = "") String functionName,
             @Param(value = "address", description = "Function address (hex, e.g. 6fc583f0). If provided, overrides function_name lookup.", defaultValue = "") String address,
@@ -2215,7 +2215,7 @@ public class FunctionService {
                         }
                         paramsList.add(paramMap);
                     }
-                    data.put("parameters", paramsList);
+                    data.put("parameters", JsonHelper.table(paramsList));
 
                     // Get local variables and detect phantom variables
                     List<Map<String, Object>> localsList = new ArrayList<>();
@@ -2279,7 +2279,7 @@ public class FunctionService {
                         }
                         localsList.add(localMap);
                     }
-                    data.put("locals", localsList);
+                    data.put("locals", JsonHelper.table(localsList));
                     data.put("total_locals", totalLocals);
                     if (filteredOut > 0) data.put("filtered_out", filteredOut);
                     if (truncated > 0) data.put("truncated", truncated);
@@ -2664,7 +2664,7 @@ public class FunctionService {
      * @param restrictToExecuteMemory If true, restricts disassembly to executable memory (default: true)
      * @return JSON result with disassembly status
      */
-    @McpTool(path = "/disassemble_bytes", method = "POST", description = "Disassemble a range of bytes. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution. Returns the disassembled instruction text (mnemonic + operands + bytes) when `include_instructions` is true (default), so callers working on custom processor definitions (#205) can read back what Ghidra produced without a follow-up call.", category = "function")
+    @McpTool(path = "/disassemble_bytes", method = "POST", description = "Disassemble a range of bytes. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution. Returns the disassembled instructions as a single newline-joined `listing` string (one `<address>  <hexbytes>  <mnemonic operands>` line each, Ghidra-listing style) when `include_instructions` is true (default), so callers working on custom processor definitions (#205) can read back what Ghidra produced — including raw bytes — without a follow-up call.", category = "function")
     public Response disassembleBytes(
             @Param(value = "start_address", paramType = "address", source = ParamSource.BODY,
                    description = "Address in the program. Accepts 0x<hex> (default space) or <space>:<hex> "
@@ -2681,7 +2681,7 @@ public class FunctionService {
             @Param(value = "length", source = ParamSource.BODY, defaultValue = "0") Integer length,
             @Param(value = "restrict_to_execute_memory", source = ParamSource.BODY, defaultValue = "true") boolean restrictToExecuteMemory,
             @Param(value = "include_instructions", source = ParamSource.BODY, defaultValue = "true",
-                   description = "Return the disassembled instruction list (mnemonic, operands, raw bytes, address) in the response. Disable for byte ranges where you only need the success/byte-count summary.") boolean includeInstructions,
+                   description = "Return the disassembled instructions as a newline-joined `listing` string (address, raw bytes, mnemonic, operands per line) in the response. Disable for byte ranges where you only need the success/byte-count summary.") boolean includeInstructions,
             @Param(value = "max_instructions", source = ParamSource.BODY, defaultValue = "1000",
                    description = "Cap on number of instructions returned when include_instructions is true. Protects against runaway payload for large ranges; if the actual count exceeds this, the response sets truncated=true and instructions_total reports the real count.") int maxInstructions,
             @Param(value = "program", defaultValue = "") String programName) {
@@ -2796,52 +2796,37 @@ public class FunctionService {
                         result.put("start_address", start.toString());
                         result.put("end_address", end.toString());
                         result.put("bytes_disassembled", numBytes);
-                        result.put("message", "Successfully disassembled " + numBytes + " byte(s)");
 
                         // Issue #205: surface the actual instruction text so
                         // callers working on custom processor definitions can
                         // read back what Ghidra produced without a follow-up
-                        // /disassemble_function call.
+                        // /disassemble_function call. Emitted as a single
+                        // newline-joined, Ghidra-listing-style string
+                        // ("<addr>  <bytes>  <mnemonic operands>" per line)
+                        // rather than one JSON object per instruction — same
+                        // information (address, raw bytes, mnemonic, operands)
+                        // at a fraction of the token cost.
                         if (includeInstructions) {
-                            List<Map<String, Object>> instructions = new java.util.ArrayList<>();
                             int truncatedLimit = Math.max(1, maxInstructions);
                             int totalCount = 0;
+                            int emitted = 0;
+                            StringBuilder listingText = new StringBuilder();
                             Listing listing = program.getListing();
                             ghidra.program.model.listing.InstructionIterator instIter =
                                 listing.getInstructions(addressSet, true);
                             while (instIter.hasNext()) {
                                 ghidra.program.model.listing.Instruction inst = instIter.next();
                                 totalCount++;
-                                if (instructions.size() < truncatedLimit) {
-                                    Map<String, Object> instJson = new java.util.LinkedHashMap<>();
-                                    instJson.put("address", inst.getAddress().toString());
-                                    instJson.put("mnemonic", inst.getMnemonicString());
-                                    // Operands joined with comma to match the
-                                    // visible listing format users see in the GUI.
-                                    String[] operands = new String[inst.getNumOperands()];
-                                    for (int i = 0; i < operands.length; i++) {
-                                        operands[i] = inst.getDefaultOperandRepresentation(i);
-                                    }
-                                    instJson.put("operands", String.join(", ", operands));
-                                    instJson.put("length", inst.getLength());
-                                    // Raw bytes as lowercase hex string for
-                                    // emulator / encoder verification.
-                                    try {
-                                        byte[] bytes = inst.getBytes();
-                                        StringBuilder hex = new StringBuilder(bytes.length * 2);
-                                        for (byte b : bytes) {
-                                            hex.append(String.format("%02x", b));
-                                        }
-                                        instJson.put("bytes", hex.toString());
-                                    } catch (Exception e) {
-                                        instJson.put("bytes", null);
-                                    }
-                                    instructions.add(instJson);
+                                if (emitted < truncatedLimit) {
+                                    if (emitted > 0) listingText.append('\n');
+                                    String comment = listing.getComment(CodeUnit.EOL_COMMENT, inst.getAddress());
+                                    listingText.append(ServiceUtils.instructionLine(inst, comment));
+                                    emitted++;
                                 }
                             }
-                            result.put("instructions", instructions);
-                            result.put("instructions_total", totalCount);
-                            if (totalCount > instructions.size()) {
+                            result.put("listing", listingText.toString());
+                            result.put("instruction_count", totalCount);
+                            if (totalCount > emitted) {
                                 result.put("truncated", true);
                                 result.put("truncation_note", "max_instructions=" + truncatedLimit
                                     + " reached; raise the cap to get the rest.");

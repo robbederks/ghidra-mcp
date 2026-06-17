@@ -21,6 +21,17 @@ import uuid
 import json
 
 
+def detable(value):
+    """Expand a compact columnar table {"columns":[...],"rows":[[...]]} into a
+    list of dicts; pass-through for legacy list payloads."""
+    if isinstance(value, dict) and "columns" in value and "rows" in value:
+        cols = value.get("columns") or []
+        return [dict(zip(cols, row)) for row in (value.get("rows") or [])]
+    if isinstance(value, list):
+        return value
+    return []
+
+
 class TestScriptExecution:
     """Test script execution endpoints."""
 
@@ -385,8 +396,9 @@ class TestPhase4Integration:
         # If we got functions, analyze one
         try:
             data = response.json()
-            if data.get("functions") and len(data["functions"]) > 0:
-                func = data["functions"][0]
+            functions = detable(data.get("functions"))
+            if functions:
+                func = functions[0]
                 addr = func.get("address")
                 if addr:
                     # Detect array bounds at that address

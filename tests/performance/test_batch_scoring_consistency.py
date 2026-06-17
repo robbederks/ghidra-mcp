@@ -16,6 +16,17 @@ import pytest
 import requests
 
 
+def detable(value):
+    """Expand a compact columnar table {"columns":[...],"rows":[[...]]} into a
+    list of dicts; pass-through for legacy list payloads."""
+    if isinstance(value, dict) and "columns" in value and "rows" in value:
+        cols = value.get("columns") or []
+        return [dict(zip(cols, row)) for row in (value.get("rows") or [])]
+    if isinstance(value, list):
+        return value
+    return []
+
+
 SAMPLE_SIZE = 10
 
 
@@ -57,7 +68,7 @@ def test_batch_and_individual_scoring_agree(server_url, server_available):
         timeout=30,
     )
     assert r.status_code == 200
-    funcs = r.json().get("functions") or []
+    funcs = detable(r.json().get("functions"))
     non_thunks = [f for f in funcs if not f.get("isThunk")]
     if len(non_thunks) < SAMPLE_SIZE:
         pytest.skip(f"Only {len(non_thunks)} non-thunk functions available")

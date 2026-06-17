@@ -1337,7 +1337,7 @@
         "granularity",
         "program"
       ],
-      "description": "Dump raw P-code for a function (issue #192). Returns low (basic-iter) and high (HighFunction) P-code with basic blocks and varnodes. Granularity controls output: 'basic' = basic-block iter only (less memory), 'high' = HighFunction graph (default; includes both BB iter and op-iter). For P-code emulators / ML pipelines / alternative decompilers."
+      "description": "Dump raw P-code for a function (issue #192). Returns low (basic-iter) and high (HighFunction) P-code with basic blocks and varnodes. Each block's 'pcodes' and the top-level 'high_pcodes' are compact columnar tables {columns,rows} (varnode cells stay full objects, so no SSA info is lost). Granularity controls output: 'basic' = basic-block iter only (less memory), 'high' = HighFunction graph (default; includes both BB iter and op-iter). For P-code emulators / ML pipelines / alternative decompilers."
     },
     {
       "path": "/get_function_signature",
@@ -2239,7 +2239,7 @@
         "limit",
         "program"
       ],
-      "description": "Search for instructions by mnemonic and/or operand substring. Complement to /search_byte_patterns (byte-level); this matches after Ghidra has parsed instructions, so you can search for 'mov' + '[ecx+0xD0]' without knowing the encoding. Case-insensitive substring match on both fields. Returns {address, function, mnemonic, operands, bytes} per match."
+      "description": "Search for instructions by mnemonic and/or operand substring. Complement to /search_byte_patterns (byte-level); this matches after Ghidra has parsed instructions, so you can search for 'mov' + '[ecx+0xD0]' without knowing the encoding. Case-insensitive substring match on both fields. 'matches' is a compact columnar table {columns:[address, function, mnemonic, operands, bytes], rows:[...]} (zip columns with each row to reconstruct per-match objects)."
     },
     {
       "path": "/search_strings",

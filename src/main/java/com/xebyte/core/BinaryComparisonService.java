@@ -469,7 +469,7 @@ public class BinaryComparisonService {
             double score = matches.get(idx)[0];
             Map<String, Object> matchItem = new LinkedHashMap<>();
             matchItem.put("name", tgtFunc.getName());
-            matchItem.putAll(ServiceUtils.addressToJson(tgtFunc.getEntryPoint(), tgtProgram));
+            matchItem.put("address", ServiceUtils.addressString(tgtFunc.getEntryPoint(), tgtProgram));
             matchItem.put("score", Double.parseDouble(String.format("%.4f", score)));
             matchList.add(matchItem);
         }
@@ -484,7 +484,7 @@ public class BinaryComparisonService {
             "target_program", tgtProgram.getName(),
             "threshold", threshold,
             "total_matches", indices.length,
-            "matches", matchList
+            "matches", JsonHelper.table(matchList)
         ));
     }
 
@@ -520,7 +520,7 @@ public class BinaryComparisonService {
                 "total_source_functions", totalSrc,
                 "offset", offset,
                 "limit", limit,
-                "matches", Collections.emptyList()
+                "matches", JsonHelper.table(Collections.emptyList())
             ));
         }
 
@@ -579,7 +579,7 @@ public class BinaryComparisonService {
             "total_source_functions", totalSrc,
             "offset", offset,
             "limit", limit,
-            "matches", matchList
+            "matches", JsonHelper.table(matchList)
         ));
     }
 
@@ -678,10 +678,11 @@ public class BinaryComparisonService {
 
         double similarity = computeSimilarity(sigA, sigB);
 
-        // Build diff entry lists for JSON
-        List<Map<String, Object>> prologueDiffList = diffEntriesToList(prologueDiff, prologueDiff.size());
-        List<Map<String, Object>> bodyDiffList = diffEntriesToList(bodyDiff, MAX_DIFF_ENTRIES);
-        List<Map<String, Object>> epilogueDiffList = diffEntriesToList(epilogueDiff, epilogueDiff.size());
+        // Build compact unified-diff strings (sigil per line) instead of
+        // arrays of {type,line} objects — same info, far fewer tokens.
+        String prologueDiffText = diffEntriesToText(prologueDiff, prologueDiff.size());
+        String bodyDiffText = diffEntriesToText(bodyDiff, MAX_DIFF_ENTRIES);
+        String epilogueDiffText = diffEntriesToText(epilogueDiff, epilogueDiff.size());
 
         Map<String, Object> funcAInfo = new LinkedHashMap<>();
         funcAInfo.put("name", funcA.getName());
@@ -711,9 +712,9 @@ public class BinaryComparisonService {
                 "strings_only_in_a", stringsOnlyA,
                 "strings_only_in_b", stringsOnlyB
             ),
-            "prologue_diff", prologueDiffList,
-            "body_diff", bodyDiffList,
-            "epilogue_diff", epilogueDiffList
+            "prologue_diff", prologueDiffText,
+            "body_diff", bodyDiffText,
+            "epilogue_diff", epilogueDiffText
         ));
     }
 
@@ -887,14 +888,26 @@ public class BinaryComparisonService {
     /**
      * Convert a list of DiffEntry objects to a list of maps for JSON serialization.
      */
-    private static List<Map<String, Object>> diffEntriesToList(List<DiffEntry> entries, int maxEntries) {
+    /**
+     * Render a diff as a compact unified-diff-style string instead of an array
+     * of {@code {type,line}} objects: one line each, prefixed with a sigil
+     * ({@code '='} equal, {@code '+'} added in B, {@code '-'} removed from A),
+     * joined by newlines. Same information, a fraction of the tokens.
+     */
+    private static String diffEntriesToText(List<DiffEntry> entries, int maxEntries) {
         int count = Math.min(entries.size(), maxEntries);
-        List<Map<String, Object>> result = new ArrayList<>(count);
+        StringBuilder sb = new StringBuilder();
         for (int i = 0; i < count; i++) {
             DiffEntry e = entries.get(i);
-            result.add(JsonHelper.mapOf("type", e.type, "line", e.line));
+            if (i > 0) sb.append('\n');
+            char sigil = switch (e.type) {
+                case "added" -> '+';
+                case "removed" -> '-';
+                default -> '=';
+            };
+            sb.append(sigil).append(' ').append(e.line);
         }
-        return result;
+        return sb.toString();
     }
 
     private static double numericFieldSimilarity(int a, int b) {

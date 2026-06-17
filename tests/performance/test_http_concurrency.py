@@ -27,6 +27,17 @@ import pytest
 import requests
 
 
+def detable(value):
+    """Expand a compact columnar table {"columns":[...],"rows":[[...]]} into a
+    list of dicts; pass-through for legacy list payloads."""
+    if isinstance(value, dict) and "columns" in value and "rows" in value:
+        cols = value.get("columns") or []
+        return [dict(zip(cols, row)) for row in (value.get("rows") or [])]
+    if isinstance(value, list):
+        return value
+    return []
+
+
 # Thresholds chosen well above healthy post-fix measurements (17 ms avg) but
 # well below pre-fix measurements (10,829 ms avg) so the test is robust to
 # machine variance while still catching a regression.
@@ -47,7 +58,7 @@ def _fetch_non_thunk_addresses(server_url, program, n):
     )
     r.raise_for_status()
     data = r.json()
-    addrs = [f"0x{f['address']}" for f in data.get("functions", []) if not f.get("isThunk")]
+    addrs = [f"0x{f['address']}" for f in detable(data.get("functions")) if not f.get("isThunk")]
     return addrs[:n]
 
 

@@ -83,7 +83,7 @@ public class ListingService {
         return Response.text(ServiceUtils.paginateList(lines, offset, limit));
     }
 
-    @McpTool(path = "/list_imports", description = "List external/imported symbols", category = "listing")
+    @McpTool(path = "/list_imports", description = "List external/imported symbols. Returns a compact columnar table {columns:[...], rows:[...]}.", category = "listing")
     public Response listImports(
             @Param(value = "offset", defaultValue = "0") int offset,
             @Param(value = "limit", defaultValue = "100") int limit,
@@ -108,7 +108,7 @@ public class ListingService {
             all.add(entry);
         }
         int end = Math.min(offset + limit, all.size());
-        return Response.ok(offset < all.size() ? all.subList(offset, end) : List.of());
+        return Response.ok(JsonHelper.table(offset < all.size() ? all.subList(offset, end) : List.of()));
     }
 
     @McpTool(path = "/list_exports", description = "List exported entry points", category = "listing")
@@ -337,7 +337,7 @@ public class ListingService {
         return Response.text(result.toString());
     }
 
-    @McpTool(path = "/list_functions_enhanced", description = "List functions with thunk/external flags as JSON", category = "listing")
+    @McpTool(path = "/list_functions_enhanced", description = "List functions with thunk/external flags as JSON. The \"functions\" key is a compact columnar table {columns:[...], rows:[...]}.", category = "listing")
     public Response listFunctionsEnhanced(
             @Param(value = "offset", defaultValue = "0") int offset,
             @Param(value = "limit", defaultValue = "10000") int limit,
@@ -367,7 +367,7 @@ public class ListingService {
         }
 
         return Response.ok(JsonHelper.mapOf(
-                "functions", functions,
+                "functions", JsonHelper.table(functions),
                 "count", count,
                 "offset", offset,
                 "limit", limit
@@ -449,7 +449,7 @@ public class ListingService {
         ));
     }
 
-    @McpTool(path = "/search_strings", description = "Search strings by regex pattern.", category = "listing")
+    @McpTool(path = "/search_strings", description = "Search strings by regex pattern. The \"matches\" key is a compact columnar table {columns:[...], rows:[...]}.", category = "listing")
     public Response searchStrings(
             @Param(value = "search_term", description = "Regex search pattern") String query,
             @Param(value = "min_length", defaultValue = "4") int minLength,
@@ -491,7 +491,7 @@ public class ListingService {
         int to = Math.min(from + limit, total);
 
         return Response.ok(JsonHelper.mapOf(
-                "matches", results.subList(from, to),
+                "matches", JsonHelper.table(results.subList(from, to)),
                 "total", total,
                 "offset", offset,
                 "limit", limit
@@ -847,7 +847,7 @@ public class ListingService {
     // External Location Listing
     // ========================================================================
 
-    @McpTool(path = "/list_external_locations", description = "List external symbol locations", category = "listing")
+    @McpTool(path = "/list_external_locations", description = "List external symbol locations. Returns a compact columnar table {columns:[...], rows:[...]}.", category = "listing")
     public Response listExternalLocations(
             @Param(value = "offset", defaultValue = "0") int offset,
             @Param(value = "limit", defaultValue = "100") int limit,
@@ -877,7 +877,7 @@ public class ListingService {
                 }
             }
             int end = Math.min(offset + limit, results.size());
-            return Response.ok(offset < results.size() ? results.subList(offset, end) : List.of());
+            return Response.ok(JsonHelper.table(offset < results.size() ? results.subList(offset, end) : List.of()));
         } catch (Exception e) {
             Msg.error(this, "Error listing external locations: " + e.getMessage());
             return Response.err(e.getMessage());

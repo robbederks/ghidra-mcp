@@ -231,7 +231,7 @@ public class DocumentationHashService {
     /**
      * Get hashes for multiple functions efficiently
      */
-    @McpTool(path = "/get_bulk_function_hashes", description = "Get hashes for multiple or all functions", category = "documentation")
+    @McpTool(path = "/get_bulk_function_hashes", description = "Get hashes for multiple or all functions. The 'functions' key is a columnar table {columns,rows} rather than an array of objects.", category = "documentation")
     public Response getBulkFunctionHashes(
             @Param(value = "offset", defaultValue = "0") int offset,
             @Param(value = "limit", defaultValue = "100") int limit,
@@ -281,7 +281,7 @@ public class DocumentationHashService {
 
             return Response.ok(JsonHelper.mapOf(
                 "program", program.getName(),
-                "functions", functionsList,
+                "functions", JsonHelper.table(functionsList),
                 "offset", offset,
                 "limit", limit,
                 "returned", added,
@@ -786,7 +786,7 @@ public class DocumentationHashService {
      * Find undocumented (FUN_*) functions that reference a given string address.
      * This filters get_xrefs_to results to only return FUN_* functions.
      */
-    @McpTool(path = "/find_undocumented_by_string", description = "Find FUN_* functions referencing a string. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "documentation")
+    @McpTool(path = "/find_undocumented_by_string", description = "Find FUN_* functions referencing a string. The 'undocumented_functions' key is a columnar table {columns,rows} rather than an array of objects. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "documentation")
     public Response findUndocumentedByString(
             @Param(value = "address", paramType = "address",
                    description = "Address in the program. Accepts 0x<hex> (default space) or <space>:<hex> "
@@ -850,7 +850,7 @@ public class DocumentationHashService {
 
             return Response.ok(JsonHelper.mapOf(
                 "string_address", stringAddress,
-                "undocumented_functions", undocumentedList,
+                "undocumented_functions", JsonHelper.table(undocumentedList),
                 "undocumented_count", undocCount,
                 "documented_count", docCount,
                 "total_referencing_functions", seenFunctions.size()
@@ -865,7 +865,7 @@ public class DocumentationHashService {
      * Generate a report of all strings matching a pattern (e.g., ".cpp") and their referencing FUN_* functions.
      * This helps identify undocumented functions that can be matched using string anchors.
      */
-    @McpTool(path = "/batch_string_anchor_report", description = "Report of source file strings and their FUN_* functions", category = "documentation")
+    @McpTool(path = "/batch_string_anchor_report", description = "Report of source file strings and their FUN_* functions. The 'anchors' key is a columnar table {columns,rows}; each anchor's nested 'undocumented' list is likewise a columnar table {columns,rows}, while 'documented' remains a list of strings.", category = "documentation")
     public Response batchStringAnchorReport(
             @Param(value = "pattern", defaultValue = ".cpp", description = "File pattern (e.g. .cpp)") String pattern,
             @Param(value = "program", description = "Target program name (omit to use the active program — always specify when multiple programs are open)", defaultValue = "") String programName) {
@@ -935,7 +935,7 @@ public class DocumentationHashService {
                                 anchorsList.add(JsonHelper.mapOf(
                                     "string", strValue,
                                     "address", strAddr.toString(),
-                                    "undocumented", undocFuncsList,
+                                    "undocumented", JsonHelper.table(undocFuncsList),
                                     "documented", docFuncsList,
                                     "undocumented_count", undocFuncsList.size(),
                                     "documented_count", docFuncsList.size()
@@ -948,7 +948,7 @@ public class DocumentationHashService {
 
             return Response.ok(JsonHelper.mapOf(
                 "pattern", pattern,
-                "anchors", anchorsList,
+                "anchors", JsonHelper.table(anchorsList),
                 "total_anchors", anchorsList.size(),
                 "total_undocumented_functions", totalUndocumented
             ));
@@ -996,7 +996,7 @@ public class DocumentationHashService {
     /**
      * Find functions in target program similar to the source function.
      */
-    @McpTool(path = "/find_similar_functions_fuzzy", description = "Cross-binary fuzzy function matching. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "documentation")
+    @McpTool(path = "/find_similar_functions_fuzzy", description = "Cross-binary fuzzy function matching. The 'matches' key is a compact columnar table {columns,rows} rather than an array of objects. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "documentation")
     public Response handleFindSimilarFunctionsFuzzy(
             @Param(value = "address", paramType = "address",
                    description = "Address in the program. Accepts 0x<hex> (default space) or <space>:<hex> "
@@ -1038,7 +1038,7 @@ public class DocumentationHashService {
     /**
      * Bulk fuzzy match: find best match for each source function in target program.
      */
-    @McpTool(path = "/bulk_fuzzy_match", description = "Bulk cross-binary function matching", category = "documentation")
+    @McpTool(path = "/bulk_fuzzy_match", description = "Bulk cross-binary function matching. The 'matches' key is a compact columnar table {columns,rows} rather than an array of objects.", category = "documentation")
     public Response handleBulkFuzzyMatch(
             @Param(value = "source_program", description = "Source program name") String sourceProgramName,
             @Param(value = "target_program", description = "Target program name") String targetProgramName,
@@ -1071,7 +1071,7 @@ public class DocumentationHashService {
     /**
      * Compute a structured diff between two functions.
      */
-    @McpTool(path = "/diff_functions", description = "Compute structured diff between two functions. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "documentation")
+    @McpTool(path = "/diff_functions", description = "Compute structured diff between two functions. The prologue_diff/body_diff/epilogue_diff fields are compact unified-diff strings (one line each, prefixed '=' equal / '+' added in B / '-' removed from A) rather than arrays of {type,line} objects. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "documentation")
     public Response handleDiffFunctions(
             @Param(value = "address_a", paramType = "address",
                    description = "Address in the program. Accepts 0x<hex> (default space) or <space>:<hex> "

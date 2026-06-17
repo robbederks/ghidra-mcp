@@ -2596,7 +2596,7 @@ public class DataTypeService {
      * @param structSize Size of the structure in bytes (0 for auto-detect)
      * @return Response with field name suggestions
      */
-    @McpTool(path = "/suggest_field_names", method = "POST", description = "AI-assisted field name suggestions. On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "datatype")
+    @McpTool(path = "/suggest_field_names", method = "POST", description = "AI-assisted field name suggestions. The \"suggestions\" value is a columnar table {columns, rows} (columns: offset, current_name, field_type, suggested_names, confidence; suggested_names is a string list per row). On programs with multiple address spaces (e.g., embedded targets), prefix addresses with the space name (mem:1000) to avoid ambiguous resolution.", category = "datatype")
     public Response suggestFieldNames(
             @Param(value = "struct_address", paramType = "address", source = ParamSource.BODY,
                    description = "Address in the program. Accepts 0x<hex> (default space) or <space>:<hex> "
@@ -2672,7 +2672,7 @@ public class DataTypeService {
                         "struct_address", structAddressStr,
                         "struct_name", struct.getName(),
                         "struct_size", struct.getLength(),
-                        "suggestions", suggestions
+                        "suggestions", JsonHelper.table(suggestions)
                     )));
 
                 } catch (Exception e) {
